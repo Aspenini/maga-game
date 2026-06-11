@@ -19,6 +19,15 @@ Development runs at `http://localhost:3000/`. The production build is written to
 `dist/` with relative asset URLs, so the folder can be served from `/game/`, a
 game subdomain, or another static path.
 
+## GitHub Pages
+
+Pushes to `main` run the GitHub Pages deployment workflow. It installs with Bun
+1.3.14, typechecks, tests, builds `dist/`, and deploys that directory.
+
+In the GitHub repository settings, set **Pages > Build and deployment > Source**
+to **GitHub Actions**. The workflow can also be run manually from the Actions
+tab.
+
 ## Desktop Build
 
 `bun run desktop` launches the game in the operating system's native WebView.
