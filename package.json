@@ -1,0 +1,25 @@
+{
+  "name": "maga-disclosure-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun ./index.html",
+    "build": "bun run scripts/build.ts",
+    "desktop": "bun run desktop/main.ts",
+    "build:desktop": "bun run scripts/build-desktop.ts",
+    "smoke:desktop": "bun run build:desktop && ./desktop-dist/maga-disclosure-runner --smoke",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test && bun run build && bun run build:desktop"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0",
+    "webview-bun": "2.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "playwright": "1.58.1",
+    "typescript": "^5.9.3"
+  }
+}

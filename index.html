@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="$MAGA Disclosure Runner - a retro browser runner from Make Aliens Great Again."
+    />
+    <meta name="theme-color" content="#050607" />
+    <title>$MAGA Disclosure Runner</title>
+  </head>
+  <body>
+    <main id="game-shell" aria-label="$MAGA Disclosure Runner">
+      <div id="game-container" aria-label="Game canvas"></div>
+
+      <section id="hud" class="hud is-hidden" aria-live="polite">
+        <div class="hud__cluster">
+          <div class="hud__eyebrow">SIGNAL</div>
+          <div class="hud__score" id="score-value">000000</div>
+          <div class="hud__meta">
+            <span id="phase-value">AREA 51</span>
+            <span id="combo-value">COMBO x1</span>
+          </div>
+        </div>
+        <div class="hud__cluster hud__cluster--right">
+          <div class="hud__collectibles">
+            <span><b id="token-value">0</b> TOKENS</span>
+            <span><b id="file-value">0</b> FILES</span>
+          </div>
+          <div id="shield-meter" class="shield-meter is-hidden">
+            <span>DISCLOSURE SHIELD</span>
+            <i id="shield-fill"></i>
+          </div>
+          <div class="hud__actions">
+            <button id="pause-button" class="icon-button" type="button" aria-label="Pause game">II</button>
+            <button id="mute-button" class="icon-button" type="button" aria-label="Mute audio">SND</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="start-screen" class="overlay overlay--active" aria-labelledby="game-title">
+        <div class="panel panel--hero">
+          <div class="signal-tag"><span></span> INCOMING TRANSMISSION</div>
+          <img id="brand-mascot" class="mascot" alt="$MAGA pixel alien mascot" />
+          <p class="kicker">MAKE ALIENS GREAT AGAIN PRESENTS</p>
+          <h1 id="game-title">DISCLOSURE<br /><em>RUNNER</em></h1>
+          <p class="lede">
+            Break through the blackout. Recover the files. Keep the signal alive.
+          </p>
+          <button id="start-button" class="primary-button" type="button">
+            <span>START TRANSMISSION</span>
+            <small>SPACE / TAP TO JUMP</small>
+          </button>
+          <div class="high-score">BEST SIGNAL <b id="menu-high-score">000000</b></div>
+          <p class="fine-print">Make Aliens Great Again</p>
+        </div>
+      </section>
+
+      <section id="pause-screen" class="overlay is-hidden" aria-labelledby="pause-title">
+        <div class="panel panel--compact">
+          <div class="signal-tag"><span></span> SIGNAL HELD</div>
+          <h2 id="pause-title">TRANSMISSION PAUSED</h2>
+          <button id="resume-button" class="primary-button" type="button">RESUME RUN</button>
+        </div>
+      </section>
+
+      <section id="result-screen" class="overlay is-hidden" aria-labelledby="result-title">
+        <div class="panel panel--result">
+          <div class="signal-tag signal-tag--red"><span></span> SIGNAL INTERRUPTED</div>
+          <h2 id="result-title">THE FILES<br />SURVIVE</h2>
+          <div class="result-grid">
+            <div><span>SCORE</span><b id="result-score">000000</b></div>
+            <div><span>BEST</span><b id="result-high-score">000000</b></div>
+            <div><span>DISTANCE</span><b id="result-distance">0m</b></div>
+            <div><span>FILES</span><b id="result-files">0</b></div>
+          </div>
+          <button id="replay-button" class="primary-button" type="button">RUN IT BACK</button>
+          <nav class="cta-row" aria-label="Official $MAGA links">
+            <a data-cta="buy" href="https://www.makealiensgreatagain.com/buy" target="_blank" rel="noopener noreferrer">BUY $MAGA</a>
+            <a data-cta="disclosure" href="https://www.makealiensgreatagain.com/disclosure" target="_blank" rel="noopener noreferrer">DISCLOSURE</a>
+            <a data-cta="telegram" href="https://t.me/MakeAliensGreatAgain" target="_blank" rel="noopener noreferrer">COMMUNITY</a>
+          </nav>
+          <p class="fine-print">Make Aliens Great Again</p>
+        </div>
+      </section>
+
+      <button id="jump-button" class="jump-button is-hidden" type="button" aria-label="Jump">
+        <span>JUMP</span>
+      </button>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
