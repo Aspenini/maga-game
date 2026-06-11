@@ -203,7 +203,7 @@ export class RunnerScene extends Phaser.Scene {
       });
     };
     create("player-idle", "player-idle", 3, 5);
-    create("player-run", "player-run", 7, 16);
+    create("player-run", "player-run", 7, 20);
     create("player-jump", "player-jump", 3, 8);
     create("player-hurt", "player-hurt", 3, 10, 0);
     create("player-celebrate", "player-celebrate", 3, 8);

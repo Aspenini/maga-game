@@ -32,7 +32,7 @@ describe("player motion", () => {
 
   test("rises to an apex then lands back on the ground", () => {
     let state = stepPlayer(initialPlayerState(), 16, PRESS);
-    const apex = advance(state, 60).y; // ~1s, well past the apex
+    const apex = advance(state, 70).y; // ~1.1s, well past the apex
     expect(apex).toBe(PLAYER_REST_Y);
     // peak height was meaningfully above the ground at some point
     state = stepPlayer(initialPlayerState(), 16, PRESS);

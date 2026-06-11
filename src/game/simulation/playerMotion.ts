@@ -6,7 +6,7 @@ import { clampSimulationDelta } from "./worldMotion";
 export const PLAYER_REST_Y = GROUND_Y - 38;
 
 const GRAVITY = 1480; // px / s^2
-const JUMP_VELOCITY = -690; // px / s
+const JUMP_VELOCITY = -745; // px / s
 const JUMP_CUT_VELOCITY = -280; // upward speed cap once the jump is released
 const COYOTE_MS = 110; // grace window to still jump just after leaving ground
 const JUMP_BUFFER_MS = 140; // grace window to remember a too-early jump press
