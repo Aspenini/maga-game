@@ -1,6 +1,7 @@
 import { collectibleScore, distanceScore, stompScore } from "./scoring";
 import { phaseForElapsed, speedForElapsed } from "./progression";
 import type { CollectibleKind, CollectibleCounts, RunSnapshot } from "./types";
+import { clampSimulationDelta, responsivePace } from "./worldMotion";
 
 const SHIELD_DURATION_MS = 6000;
 
@@ -23,12 +24,13 @@ export class RunModel {
     return this.snapshot();
   }
 
-  update(deltaMs: number): RunSnapshot {
+  update(deltaMs: number, paceScale = 1): RunSnapshot {
     if (this.snapshotState.mode !== "running") return this.snapshot();
-    const clamped = Math.min(50, Math.max(0, deltaMs));
+    const clamped = clampSimulationDelta(deltaMs);
+    const pace = responsivePace(paceScale);
     const previousDistance = this.snapshotState.distance;
     const elapsedMs = this.snapshotState.elapsedMs + clamped;
-    const speed = speedForElapsed(elapsedMs);
+    const speed = Math.round(speedForElapsed(elapsedMs) * pace);
     const distance = previousDistance + (speed * clamped) / 10000;
     const score = this.snapshotState.score + distanceScore(previousDistance, distance);
     const shieldMs = Math.max(0, this.snapshotState.shieldMs - clamped);

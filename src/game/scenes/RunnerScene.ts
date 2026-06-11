@@ -4,18 +4,44 @@ import { gameAudio } from "../audio";
 import { GAME_HEIGHT, GAME_WIDTH, GROUND_Y, PLAYER_X } from "../constants";
 import { emitPublicEvent, gameBus, publishSnapshot, type UiCommand } from "../events";
 import { ChunkGenerator } from "../content/chunks";
-import { difficultyForElapsed } from "../simulation/progression";
+import { difficultyForElapsed, paceForVisibleWidth } from "../simulation/progression";
 import { RunModel } from "../simulation/runModel";
 import type { CollectibleKind, Phase, RunSnapshot, SpawnKind } from "../simulation/types";
+import {
+  aabbOverlap,
+  centerYForLane,
+  isStomp,
+  type Box,
+  type Lane,
+  FOOTPRINT,
+  PLAYER_BOX,
+} from "../simulation/collision";
+import {
+  initialPlayerState,
+  stepPlayer,
+  type PlayerState,
+} from "../simulation/playerMotion";
+import {
+  agentApproachForDelta,
+  cameraScrollPixels,
+  cameraTravelStep,
+  screenXForWorld,
+} from "../simulation/worldMotion";
 
-type ArcadeSprite = Phaser.Physics.Arcade.Sprite;
+type Sprite = Phaser.GameObjects.Sprite;
 
-const laneY = {
-  ground: GROUND_Y - 26,
-  low: GROUND_Y - 66,
-  mid: GROUND_Y - 132,
-  high: GROUND_Y - 200,
-} as const;
+/** A pooled world object. Positions live in world space; screen coords are
+ *  derived (and rounded) once per frame in scrollWorld. */
+interface Prop {
+  sprite: Sprite;
+  kind: SpawnKind;
+  category: "collectible" | "hazard" | "enemy";
+  worldX: number;
+  baseCenterY: number;
+  centerY: number;
+  approachOffset: number;
+  active: boolean;
+}
 
 const objectFrame: Record<Exclude<SpawnKind, "agent" | "drone">, number> = {
   token: 0,
@@ -25,28 +51,32 @@ const objectFrame: Record<Exclude<SpawnKind, "agent" | "drone">, number> = {
   barrier: 5,
 };
 
+const SPAWN_RECYCLE_X = -90;
+const SPAWN_AHEAD_X = 1260;
+
 export class RunnerScene extends Phaser.Scene {
   private model!: RunModel;
   private chunkGenerator!: ChunkGenerator;
-  private player!: ArcadeSprite;
-  private ground!: Phaser.Physics.Arcade.Image;
+  private player!: Sprite;
+  private playerState: PlayerState = initialPlayerState();
   private groundVisual!: Phaser.GameObjects.TileSprite;
-  private collectibles!: Phaser.Physics.Arcade.Group;
-  private hazards!: Phaser.Physics.Arcade.Group;
-  private enemies!: Phaser.Physics.Arcade.Group;
+  private worldLayer!: Phaser.GameObjects.Container;
+  private props: Prop[] = [];
   private shieldFx!: Phaser.GameObjects.Sprite;
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
   private spaceKey?: Phaser.Input.Keyboard.Key;
   private fullscreenKey?: Phaser.Input.Keyboard.Key;
   private escapeKey?: Phaser.Input.Keyboard.Key;
-  private jumpBufferMs = 0;
-  private coyoteMs = 0;
-  private jumpHeld = false;
-  private spawnCursorX = 1080;
+  private jumpPressedQueued = false;
+  private jumpReleasedQueued = false;
+  private cameraTravel = 0;
+  private spawnCursorWorldX = 1080;
   private lastPhase: Phase = "desert";
   private uiHandler?: (event: Event) => void;
   private lastSnapshotAt = 0;
   private debugSnapshot: RunSnapshot | undefined;
+  private paceScale = 1;
+  private targetPaceScale = 1;
 
   constructor(
     private readonly initialHighScore: number,
@@ -84,27 +114,27 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    const paceBlend = 1 - Math.exp(-delta / 650);
+    this.paceScale += (this.targetPaceScale - this.paceScale) * paceBlend;
     const before = this.model.snapshot();
-    const snapshot = this.model.update(delta);
+    const snapshot = this.model.update(delta, this.paceScale);
     this.debugSnapshot = snapshot;
 
     if (snapshot.mode !== "running") {
-      this.player.setVelocityX(0);
+      this.jumpPressedQueued = false;
+      this.jumpReleasedQueued = false;
       return;
     }
 
-    this.updateJump(delta);
+    this.updatePlayer(delta);
     this.scrollWorld(snapshot, delta);
-    this.updateAnimation(snapshot);
+    this.checkCollisions();
+    this.updateAnimation();
     this.updatePhase(before.phase, snapshot.phase);
     this.recycleOffscreen();
     this.spawnAhead(snapshot);
     this.updateShield(snapshot);
     gameAudio.tickMusic(snapshot.elapsedMs);
-
-    if (this.player.y > GAME_HEIGHT + 50) {
-      this.endRun("signal-lost");
-    }
 
     if (snapshot.elapsedMs - this.lastSnapshotAt > 80) {
       this.lastSnapshotAt = snapshot.elapsedMs;
@@ -114,21 +144,15 @@ export class RunnerScene extends Phaser.Scene {
 
   getTextState(): Record<string, unknown> {
     const snapshot = this.model?.snapshot();
-    const visible = (group?: Phaser.Physics.Arcade.Group) =>
-      group
-        ? group
-            .getChildren()
-            .filter((child) => (child as ArcadeSprite).active)
-            .slice(0, 12)
-            .map((child) => {
-              const sprite = child as ArcadeSprite;
-              return {
-                kind: sprite.getData("kind"),
-                x: Math.round(sprite.x),
-                y: Math.round(sprite.y),
-              };
-            })
-        : [];
+    const visible = (category: Prop["category"]) =>
+      this.props
+        .filter((prop) => prop.active && prop.category === category)
+        .slice(0, 12)
+        .map((prop) => ({
+          kind: prop.kind,
+          x: Math.round(prop.sprite.x),
+          y: Math.round(prop.sprite.y),
+        }));
     return {
       coordinateSystem: "origin top-left; x increases right; y increases down; canvas 960x540",
       ...snapshot,
@@ -136,14 +160,23 @@ export class RunnerScene extends Phaser.Scene {
         ? {
             x: Math.round(this.player.x),
             y: Math.round(this.player.y),
-            velocityY: Math.round(this.player.body?.velocity.y ?? 0),
-            grounded: Boolean(this.player.body?.blocked.down),
+            velocityY: Math.round(this.playerState.vy),
+            grounded: this.playerState.grounded,
           }
         : null,
-      hazards: visible(this.hazards),
-      enemies: visible(this.enemies),
-      collectiblesOnScreen: visible(this.collectibles),
+      hazards: visible("hazard"),
+      enemies: visible("enemy"),
+      collectiblesOnScreen: visible("collectible"),
+      paceScale: Number(this.paceScale.toFixed(3)),
     };
+  }
+
+  setVisibleWorldWidth(visibleWorldWidth: number): void {
+    const nextPaceScale = paceForVisibleWidth(visibleWorldWidth);
+    if (!this.model || this.model.snapshot().mode !== "running") {
+      this.paceScale = nextPaceScale;
+    }
+    this.targetPaceScale = nextPaceScale;
   }
 
   private createTextures(): void {
@@ -170,13 +203,12 @@ export class RunnerScene extends Phaser.Scene {
       });
     };
     create("player-idle", "player-idle", 3, 5);
-    create("player-run", "player-run", 7, 12);
+    create("player-run", "player-run", 7, 16);
     create("player-jump", "player-jump", 3, 8);
     create("player-hurt", "player-hurt", 3, 10, 0);
     create("player-celebrate", "player-celebrate", 3, 8);
     create("agent-run", "agent-run", 5, 10);
     create("drone-hover", "drone-hover", 5, 8);
-    create("token-spin", "objects", 0, 1);
   }
 
   private createWorld(): void {
@@ -184,38 +216,18 @@ export class RunnerScene extends Phaser.Scene {
       .tileSprite(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y, "ground-tile")
       .setOrigin(0)
       .setDepth(4);
-    this.ground = this.physics.add
-      .staticImage(GAME_WIDTH / 2, GROUND_Y + 34, "ground-tile")
-      .setDisplaySize(GAME_WIDTH, 68)
-      .setVisible(false);
-    this.ground.refreshBody();
 
-    this.collectibles = this.physics.add.group({ allowGravity: false, maxSize: 48 });
-    this.hazards = this.physics.add.group({ allowGravity: false, immovable: true, maxSize: 28 });
-    this.enemies = this.physics.add.group({ allowGravity: false, immovable: true, maxSize: 20 });
+    this.worldLayer = this.add.container(0, 0).setDepth(7);
 
-    this.player = this.physics.add
-      .sprite(PLAYER_X, GROUND_Y - 58, "player-idle", 0)
+    this.playerState = initialPlayerState();
+    this.player = this.add
+      .sprite(PLAYER_X, this.playerState.y, "player-idle", 0)
       .setDepth(8)
-      .setScale(1.32)
-      .setCollideWorldBounds(false);
-    this.player.body!.setSize(25, 50).setOffset(20, 11);
-    this.player.setGravityY(1480);
+      .setScale(1.32);
     this.player.play("player-idle");
 
     this.shieldFx = this.add.sprite(this.player.x, this.player.y, "effects", 2).setDepth(9).setVisible(false);
     this.shieldFx.setScale(1.7).setAlpha(0.72).setBlendMode(Phaser.BlendModes.ADD);
-
-    this.physics.add.collider(this.player, this.ground);
-    this.physics.add.overlap(this.player, this.collectibles, (_player, item) => {
-      this.collect(item as ArcadeSprite);
-    });
-    this.physics.add.overlap(this.player, this.hazards, (_player, hazard) => {
-      this.hitHazard(hazard as ArcadeSprite);
-    });
-    this.physics.add.overlap(this.player, this.enemies, (_player, enemy) => {
-      this.hitEnemy(enemy as ArcadeSprite);
-    });
   }
 
   private createInput(): void {
@@ -245,7 +257,7 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private startRun(seed = Date.now()): void {
-    this.clearGroups();
+    this.clearProps();
     this.chunkGenerator = new ChunkGenerator(seed);
     this.model.start(seed);
     if (this.debugStartMs > 0) {
@@ -255,16 +267,18 @@ export class RunnerScene extends Phaser.Scene {
     }
     if (this.debugShield) this.model.collect("signal");
     const snapshot = this.model.snapshot();
+    this.playerState = initialPlayerState();
     this.player
-      .setPosition(PLAYER_X, GROUND_Y - 58)
-      .setVelocity(0, 0)
+      .setPosition(PLAYER_X, this.playerState.y)
       .setAlpha(1)
       .setTint(0xffffff)
+      .clearTint()
       .play("player-run", true);
-    this.player.body!.enable = true;
-    this.spawnCursorX = 930;
-    this.jumpBufferMs = 0;
-    this.coyoteMs = 0;
+    this.cameraTravel = 0;
+    this.groundVisual.tilePositionX = 0;
+    this.spawnCursorWorldX = 930;
+    this.jumpPressedQueued = false;
+    this.jumpReleasedQueued = false;
     this.lastPhase = snapshot.phase;
     this.updatePhase(snapshot.phase, snapshot.phase, true);
     this.spawnAhead(snapshot);
@@ -276,7 +290,6 @@ export class RunnerScene extends Phaser.Scene {
   private pauseRun(): void {
     const snapshot = this.model.pause();
     if (snapshot.mode === "paused") {
-      this.physics.pause();
       this.anims.pauseAll();
       this.publish(true);
     }
@@ -285,7 +298,6 @@ export class RunnerScene extends Phaser.Scene {
   private resumeRun(): void {
     const snapshot = this.model.resume();
     if (snapshot.mode === "running") {
-      this.physics.resume();
       this.anims.resumeAll();
       this.publish(true);
     }
@@ -293,159 +305,188 @@ export class RunnerScene extends Phaser.Scene {
 
   private requestJump(): void {
     if (this.model.snapshot().mode !== "running") return;
-    this.jumpBufferMs = 140;
-    this.jumpHeld = true;
+    this.jumpPressedQueued = true;
   }
 
   private releaseJump(): void {
-    this.jumpHeld = false;
-    if (this.player?.body && this.player.body.velocity.y < -280) {
-      this.player.setVelocityY(-280);
-    }
+    this.jumpReleasedQueued = true;
   }
 
-  private updateJump(delta: number): void {
-    const body = this.player.body;
-    if (!body) return;
-    const keyDown = Boolean(
-      this.spaceKey?.isDown || this.cursors?.up.isDown,
-    );
-    if (Phaser.Input.Keyboard.JustDown(this.spaceKey!) || Phaser.Input.Keyboard.JustDown(this.cursors!.up)) {
-      this.requestJump();
-    }
-    if (!keyDown && this.jumpHeld && (this.spaceKey || this.cursors)) {
-      this.releaseJump();
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.fullscreenKey!)) {
+  private updatePlayer(delta: number): void {
+    if (this.spaceKey && Phaser.Input.Keyboard.JustDown(this.spaceKey)) this.requestJump();
+    if (this.cursors && Phaser.Input.Keyboard.JustDown(this.cursors.up)) this.requestJump();
+    if (this.spaceKey && Phaser.Input.Keyboard.JustUp(this.spaceKey)) this.releaseJump();
+    if (this.cursors && Phaser.Input.Keyboard.JustUp(this.cursors.up)) this.releaseJump();
+    if (this.fullscreenKey && Phaser.Input.Keyboard.JustDown(this.fullscreenKey)) {
       if (this.scale.isFullscreen) this.scale.stopFullscreen();
       else this.scale.startFullscreen();
     }
-    if (Phaser.Input.Keyboard.JustDown(this.escapeKey!) && this.model.snapshot().mode === "running") {
+    if (
+      this.escapeKey &&
+      Phaser.Input.Keyboard.JustDown(this.escapeKey) &&
+      this.model.snapshot().mode === "running"
+    ) {
       this.pauseRun();
     }
 
-    if (body.blocked.down || body.touching.down) this.coyoteMs = 110;
-    else this.coyoteMs = Math.max(0, this.coyoteMs - delta);
-    this.jumpBufferMs = Math.max(0, this.jumpBufferMs - delta);
-
-    if (this.jumpBufferMs > 0 && this.coyoteMs > 0) {
-      this.player.setVelocityY(-690);
-      this.jumpBufferMs = 0;
-      this.coyoteMs = 0;
-      gameAudio.jump();
-    }
+    const step = stepPlayer(this.playerState, delta, {
+      jumpPressed: this.jumpPressedQueued,
+      jumpReleased: this.jumpReleasedQueued,
+    });
+    this.jumpPressedQueued = false;
+    this.jumpReleasedQueued = false;
+    this.playerState = step;
+    this.player.setY(Math.round(step.y));
+    if (step.jumped) gameAudio.jump();
   }
 
   private scrollWorld(snapshot: RunSnapshot, delta: number): void {
-    const move = (snapshot.speed * delta) / 1000;
-    this.spawnCursorX -= move;
-    this.groundVisual.tilePositionX += move;
+    this.cameraTravel += cameraTravelStep(delta, snapshot.elapsedMs, this.paceScale);
+    this.groundVisual.tilePositionX = cameraScrollPixels(this.cameraTravel);
 
-    [this.collectibles, this.hazards, this.enemies].forEach((group) => {
-      group.getChildren().forEach((child) => {
-        const sprite = child as ArcadeSprite;
-        if (!sprite.active) return;
-        sprite.x -= move;
-        sprite.body?.updateFromGameObject();
-        if (sprite.getData("kind") === "drone") {
-          const baseY = sprite.getData("baseY") as number;
-          sprite.y = baseY + Math.sin((snapshot.elapsedMs + sprite.x * 4) / 260) * 12;
-        }
-      });
-    });
+    for (const prop of this.props) {
+      if (!prop.active) continue;
+      if (prop.kind === "agent") {
+        prop.approachOffset += agentApproachForDelta(delta, this.paceScale);
+      }
+      if (prop.kind === "drone") {
+        prop.centerY =
+          prop.baseCenterY + Math.sin((snapshot.elapsedMs + prop.worldX * 4) / 260) * 12;
+      } else {
+        prop.centerY = prop.baseCenterY;
+      }
+      prop.sprite.setPosition(
+        screenXForWorld(prop.worldX, this.cameraTravel, prop.approachOffset),
+        Math.round(prop.centerY),
+      );
+    }
+  }
+
+  private playerBox(): Box {
+    return { cx: this.player.x, cy: this.player.y, w: PLAYER_BOX.w, h: PLAYER_BOX.h };
+  }
+
+  private propBox(prop: Prop): Box {
+    const size = FOOTPRINT[prop.kind];
+    return { cx: prop.sprite.x, cy: prop.sprite.y, w: size.w, h: size.h };
+  }
+
+  private checkCollisions(): void {
+    const player = this.playerBox();
+    for (const prop of this.props) {
+      if (!prop.active) continue;
+      if (!aabbOverlap(player, this.propBox(prop))) continue;
+      if (prop.category === "collectible") {
+        this.collect(prop);
+      } else if (prop.category === "enemy") {
+        if (isStomp(player, this.propBox(prop), this.playerState.vy)) this.stomp(prop);
+        else this.resolveHit(prop);
+      } else {
+        this.resolveHit(prop);
+      }
+      // A fatal hit ends the run mid-loop; stop touching anything else this frame.
+      if (this.model.snapshot().mode !== "running") break;
+    }
   }
 
   private spawnAhead(snapshot: RunSnapshot): void {
     if (!this.chunkGenerator) return;
-    while (this.spawnCursorX < 1260) {
+    while (screenXForWorld(this.spawnCursorWorldX, this.cameraTravel) < SPAWN_AHEAD_X) {
       const chunk = this.chunkGenerator.next(
         snapshot.phase,
         difficultyForElapsed(snapshot.elapsedMs),
       );
-      chunk.spawns.forEach((spawn) => this.spawn(spawn.kind, this.spawnCursorX + spawn.x, laneY[spawn.lane]));
-      this.spawnCursorX += chunk.length;
+      chunk.spawns.forEach((spawn) =>
+        this.spawn(spawn.kind, this.spawnCursorWorldX + spawn.x, spawn.lane),
+      );
+      this.spawnCursorWorldX += chunk.length;
     }
   }
 
-  private spawn(kind: SpawnKind, x: number, y: number): void {
-    let sprite: ArcadeSprite | null = null;
+  private acquire(): Prop {
+    const free = this.props.find((prop) => !prop.active);
+    if (free) return free;
+    const sprite = this.add.sprite(0, 0, "objects", 0);
+    this.worldLayer.add(sprite);
+    const prop: Prop = {
+      sprite,
+      kind: "token",
+      category: "collectible",
+      worldX: 0,
+      baseCenterY: 0,
+      centerY: 0,
+      approachOffset: 0,
+      active: false,
+    };
+    this.props.push(prop);
+    return prop;
+  }
+
+  private spawn(kind: SpawnKind, worldX: number, lane: Lane): void {
+    const prop = this.acquire();
+    const centerY = centerYForLane(kind, lane);
+
     if (kind === "agent") {
-      sprite = this.enemies.get(x, y, "agent-run") as ArcadeSprite | null;
-      sprite?.play("agent-run", true);
-      sprite?.setScale(1.05);
+      prop.category = "enemy";
+      prop.sprite.setTexture("agent-run").setScale(1.05).play("agent-run", true);
     } else if (kind === "drone") {
-      sprite = this.enemies.get(x, y, "drone-hover") as ArcadeSprite | null;
-      sprite?.play("drone-hover", true);
-      sprite?.setScale(0.92);
-      sprite?.setData("baseY", y);
+      prop.category = "enemy";
+      prop.sprite.setTexture("drone-hover").setScale(0.92).play("drone-hover", true);
     } else if (kind === "barrier" || kind === "crate") {
-      sprite = this.hazards.get(x, y, "objects", objectFrame[kind]) as ArcadeSprite | null;
-      sprite?.setScale(kind === "crate" ? 0.92 : 0.82);
+      prop.category = "hazard";
+      prop.sprite
+        .setTexture("objects", objectFrame[kind])
+        .setScale(kind === "crate" ? 0.92 : 0.82)
+        .stop();
     } else {
-      sprite = this.collectibles.get(x, y, "objects", objectFrame[kind]) as ArcadeSprite | null;
-      sprite?.setScale(kind === "signal" ? 0.8 : 0.7);
+      prop.category = "collectible";
+      prop.sprite
+        .setTexture("objects", objectFrame[kind])
+        .setScale(kind === "signal" ? 0.8 : 0.7)
+        .stop();
     }
-    if (!sprite) return;
-    sprite
+
+    prop.kind = kind;
+    prop.worldX = worldX;
+    prop.baseCenterY = centerY;
+    prop.centerY = centerY;
+    prop.approachOffset = 0;
+    prop.active = true;
+    prop.sprite
       .setActive(true)
       .setVisible(true)
-      .setPosition(x, y)
-      .setDepth(7)
       .setAlpha(1)
       .clearTint()
-      .setData("kind", kind);
-    sprite.body!.enable = true;
-    sprite.body!.setSize(kind === "drone" ? 40 : 34, kind === "agent" ? 52 : 36);
-    if (kind === "token" || kind === "file" || kind === "signal") {
-      this.tweens.add({
-        targets: sprite,
-        angle: { from: -4, to: 4 },
-        duration: 480,
-        yoyo: true,
-        repeat: -1,
-      });
-    }
+      .setPosition(screenXForWorld(worldX, this.cameraTravel), Math.round(centerY));
   }
 
-  private collect(item: ArcadeSprite): void {
-    if (!item.active) return;
-    const kind = item.getData("kind") as CollectibleKind;
-    item.disableBody(true, true);
+  private release(prop: Prop): void {
+    prop.active = false;
+    prop.sprite.setActive(false).setVisible(false).stop();
+  }
+
+  private collect(prop: Prop): void {
+    const kind = prop.kind as CollectibleKind;
+    this.release(prop);
     this.model.collect(kind);
     gameAudio.collect(kind);
-    this.spawnBurst(item.x, item.y, kind === "signal" ? 2 : 4, kind === "signal" ? 0x69f8ff : 0xffffff);
+    this.spawnBurst(prop.sprite.x, prop.sprite.y, kind === "signal" ? 2 : 4, kind === "signal" ? 0x69f8ff : 0xffffff);
     this.publish(true);
   }
 
-  private hitHazard(hazard: ArcadeSprite): void {
-    if (!hazard.active) return;
-    const kind = String(hazard.getData("kind"));
-    this.resolveHit(kind, hazard);
+  private stomp(prop: Prop): void {
+    this.release(prop);
+    this.playerState = { ...this.playerState, vy: -460, grounded: false };
+    this.model.stomp();
+    gameAudio.stomp();
+    this.spawnBurst(prop.sprite.x, prop.sprite.y, 1, 0xe33a32);
+    this.publish(true);
   }
 
-  private hitEnemy(enemy: ArcadeSprite): void {
-    if (!enemy.active) return;
-    const body = this.player.body;
-    const enemyBody = enemy.body;
-    const descending = (body?.velocity.y ?? 0) > 120;
-    const playerBottom = body?.bottom ?? this.player.y + 30;
-    const enemyTop = enemyBody?.top ?? enemy.y - 30;
-    if (descending && playerBottom < enemyTop + 28) {
-      enemy.disableBody(true, true);
-      this.player.setVelocityY(-460);
-      this.model.stomp();
-      gameAudio.stomp();
-      this.spawnBurst(enemy.x, enemy.y, 1, 0xe33a32);
-      this.publish(true);
-      return;
-    }
-    this.resolveHit(String(enemy.getData("kind")), enemy);
-  }
-
-  private resolveHit(reason: string, source: ArcadeSprite): void {
-    const result = this.model.hit(reason);
+  private resolveHit(prop: Prop): void {
+    const result = this.model.hit(prop.kind);
     if (result.absorbed) {
-      source.disableBody(true, true);
+      this.release(prop);
       gameAudio.shield();
       this.cameras.main.shake(100, 0.007);
       this.player.setTint(0x69f8ff);
@@ -453,15 +494,14 @@ export class RunnerScene extends Phaser.Scene {
       this.publish(true);
       return;
     }
-    this.endRun(reason);
+    this.endRun(prop.kind);
   }
 
   private endRun(reason: string): void {
     const result = this.model.hit(reason);
     const snapshot = result.snapshot;
     if (snapshot.mode !== "gameover") return;
-    this.player.play("player-hurt", true).setVelocity(0, -300).setTint(0xff726a);
-    this.player.body!.enable = false;
+    this.player.play("player-hurt", true).setTint(0xff726a);
     gameAudio.hit();
     this.cameras.main.shake(280, 0.012);
     emitPublicEvent("run-end", {
@@ -473,11 +513,9 @@ export class RunnerScene extends Phaser.Scene {
     this.publish(true);
   }
 
-  private updateAnimation(snapshot: RunSnapshot): void {
-    if (snapshot.mode !== "running") return;
-    const grounded = Boolean(this.player.body?.blocked.down);
-    if (!grounded) this.player.play("player-jump", true);
-    else this.player.play("player-run", true);
+  private updateAnimation(): void {
+    if (this.playerState.grounded) this.player.play("player-run", true);
+    else this.player.play("player-jump", true);
   }
 
   private updatePhase(previous: Phase, next: Phase, force = false): void {
@@ -497,15 +535,10 @@ export class RunnerScene extends Phaser.Scene {
   }
 
   private recycleOffscreen(): void {
-    [this.collectibles, this.hazards, this.enemies].forEach((group) => {
-      group.getChildren().forEach((child) => {
-        const sprite = child as ArcadeSprite;
-        if (sprite.active && sprite.x < -90) {
-          this.tweens.killTweensOf(sprite);
-          sprite.disableBody(true, true);
-        }
-      });
-    });
+    for (const prop of this.props) {
+      if (!prop.active) continue;
+      if (prop.sprite.x < SPAWN_RECYCLE_X) this.release(prop);
+    }
   }
 
   private spawnBurst(x: number, y: number, frame: number, tint: number): void {
@@ -519,14 +552,8 @@ export class RunnerScene extends Phaser.Scene {
     });
   }
 
-  private clearGroups(): void {
-    [this.collectibles, this.hazards, this.enemies].forEach((group) => {
-      group.getChildren().forEach((child) => {
-        const sprite = child as ArcadeSprite;
-        this.tweens.killTweensOf(sprite);
-        sprite.disableBody(true, true);
-      });
-    });
+  private clearProps(): void {
+    for (const prop of this.props) this.release(prop);
   }
 
   private publish(force = false): void {

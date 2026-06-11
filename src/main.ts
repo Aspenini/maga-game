@@ -23,13 +23,6 @@ const game = new Phaser.Game({
   pixelArt: true,
   antialias: false,
   roundPixels: true,
-  physics: {
-    default: "arcade",
-    arcade: {
-      gravity: { x: 0, y: 0 },
-      debug: false,
-    },
-  },
   scale: {
     mode: Phaser.Scale.ENVELOP,
     fullscreenTarget: "game-shell",
@@ -51,13 +44,16 @@ const layoutCoverCanvas = (): void => {
   const displayWidth = GAME_WIDTH * coverScale;
   const displayHeight = GAME_HEIGHT * coverScale;
   const playerScreenX = viewportWidth * (PLAYER_X / GAME_WIDTH);
+  const visibleWorldWidth = viewportWidth / coverScale;
 
   Object.assign(game.canvas.style, {
-    width: `${displayWidth}px`,
-    height: `${displayHeight}px`,
+    width: `${Math.round(displayWidth)}px`,
+    height: `${Math.round(displayHeight)}px`,
     left: `${playerScreenX - PLAYER_X * coverScale}px`,
     top: `${viewportHeight - displayHeight}px`,
+    imageRendering: "pixelated",
   });
+  runnerScene.setVisibleWorldWidth(visibleWorldWidth);
 };
 
 game.scale.on(Phaser.Scale.Events.RESIZE, layoutCoverCanvas);

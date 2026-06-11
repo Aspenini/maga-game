@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { difficultyForElapsed, phaseForElapsed, speedForElapsed } from "../src/game/simulation/progression";
+import {
+  difficultyForElapsed,
+  paceForVisibleWidth,
+  phaseForElapsed,
+  speedForElapsed,
+} from "../src/game/simulation/progression";
 
 describe("run progression", () => {
   test("cycles through the three disclosure environments", () => {
@@ -20,5 +25,13 @@ describe("run progression", () => {
     expect(difficultyForElapsed(-100)).toBe(0);
     expect(difficultyForElapsed(45000)).toBe(0.5);
     expect(difficultyForElapsed(200000)).toBe(1);
+  });
+
+  test("smoothly reduces pace as visible horizontal space shrinks", () => {
+    expect(paceForVisibleWidth(960)).toBe(1);
+    expect(paceForVisibleWidth(900)).toBeGreaterThan(paceForVisibleWidth(720));
+    expect(paceForVisibleWidth(720)).toBeGreaterThan(paceForVisibleWidth(560));
+    expect(paceForVisibleWidth(240)).toBe(0.62); // floor for narrow mobile viewports
+    expect(paceForVisibleWidth(2000)).toBe(1);
   });
 });

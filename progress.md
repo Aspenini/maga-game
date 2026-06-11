@@ -25,3 +25,10 @@ Original prompt: Create and implement a Super Mario Bros-style promotional game 
 - The transparent game canvas also uses proportional cover zoom, with the
   player horizontally anchored and the running platform aligned to the bottom
   on tall or narrow viewports.
+- Added responsive pacing based on the visible horizontal world width. Narrow
+  screens smoothly slow toward 52% speed while desktop retains full speed.
+- Reworked scrolling around one accumulated camera-travel value. Floor tiles,
+  hazards, collectibles, and drones stay world-locked; agents add a small
+  independent approach speed so they slowly run toward the player.
+- Removed forced whole-pixel snapping and nearest-neighbor canvas scaling that
+  caused shimmer under fractional cover zoom; the player run loop is now 16 FPS.

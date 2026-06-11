@@ -33,4 +33,18 @@ describe("run model", () => {
     expect(model.snapshot().elapsedMs).toBe(before.elapsedMs);
     expect(model.resume().mode).toBe("running");
   });
+
+  test("responsive pace lowers speed and distance on narrow views", () => {
+    const desktop = new RunModel();
+    const mobile = new RunModel();
+    desktop.start(10);
+    mobile.start(10);
+
+    const desktopSnapshot = desktop.update(50, 1);
+    const mobileSnapshot = mobile.update(50, 0.52);
+
+    expect(mobileSnapshot.speed).toBeLessThan(desktopSnapshot.speed);
+    expect(mobileSnapshot.distance).toBeLessThan(desktopSnapshot.distance);
+    expect(mobileSnapshot.elapsedMs).toBe(desktopSnapshot.elapsedMs);
+  });
 });
