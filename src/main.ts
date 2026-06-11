@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import "./styles.css";
-import { GAME_HEIGHT, GAME_WIDTH } from "./game/constants";
+import { GAME_HEIGHT, GAME_WIDTH, PLAYER_X } from "./game/constants";
 import { RunnerScene } from "./game/scenes/RunnerScene";
 import { readInitialHighScore, setupUi } from "./game/ui/controller";
 
@@ -19,7 +19,7 @@ const game = new Phaser.Game({
   parent: "game-container",
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
-  backgroundColor: "#050607",
+  transparent: true,
   pixelArt: true,
   antialias: false,
   roundPixels: true,
@@ -31,13 +31,38 @@ const game = new Phaser.Game({
     },
   },
   scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    mode: Phaser.Scale.ENVELOP,
     fullscreenTarget: "game-shell",
   },
   scene: [runnerScene],
   banner: false,
 });
+
+const gameShell = document.querySelector<HTMLElement>("#game-shell");
+if (!gameShell) throw new Error("Missing game shell.");
+
+const layoutCoverCanvas = (): void => {
+  const viewportWidth = gameShell.clientWidth;
+  const viewportHeight = gameShell.clientHeight;
+  const coverScale = Math.max(
+    viewportWidth / GAME_WIDTH,
+    viewportHeight / GAME_HEIGHT,
+  );
+  const displayWidth = GAME_WIDTH * coverScale;
+  const displayHeight = GAME_HEIGHT * coverScale;
+  const playerScreenX = viewportWidth * (PLAYER_X / GAME_WIDTH);
+
+  Object.assign(game.canvas.style, {
+    width: `${displayWidth}px`,
+    height: `${displayHeight}px`,
+    left: `${playerScreenX - PLAYER_X * coverScale}px`,
+    top: `${viewportHeight - displayHeight}px`,
+  });
+};
+
+game.scale.on(Phaser.Scale.Events.RESIZE, layoutCoverCanvas);
+new ResizeObserver(layoutCoverCanvas).observe(gameShell);
+requestAnimationFrame(layoutCoverCanvas);
 
 declare global {
   interface Window {

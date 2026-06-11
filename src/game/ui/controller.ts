@@ -1,4 +1,5 @@
 import mascotUrl from "../../assets/brand/pixel-alien.webp";
+import { assetUrls } from "../assets";
 import { emitPublicEvent, gameBus, sendUiCommand } from "../events";
 import { loadHighScore, saveHighScore } from "../simulation/persistence";
 import type { RunSnapshot } from "../simulation/types";
@@ -24,11 +25,19 @@ export function setupUi(initialHighScore: number): void {
   const jumpButton = $("#jump-button");
   const muteButton = $("#mute-button");
   const mascot = $<HTMLImageElement>("#brand-mascot");
+  const backgrounds = {
+    desert: $<HTMLImageElement>("#background-desert"),
+    archive: $<HTMLImageElement>("#background-archive"),
+    launch: $<HTMLImageElement>("#background-launch"),
+  } as const;
   const menuHighScore = $("#menu-high-score");
   let muted = false;
   let previousMode = "menu";
 
   mascot.src = mascotUrl;
+  backgrounds.desert.src = assetUrls.desertUrl;
+  backgrounds.archive.src = assetUrls.archiveUrl;
+  backgrounds.launch.src = assetUrls.launchUrl;
   menuHighScore.textContent = formatScore(initialHighScore);
 
   const begin = () => {
@@ -81,6 +90,9 @@ export function setupUi(initialHighScore: number): void {
     $("#combo-value").textContent = `COMBO x${snapshot.combo}`;
     $("#token-value").textContent = String(snapshot.collectibles.token);
     $("#file-value").textContent = String(snapshot.collectibles.file);
+    for (const [phase, background] of Object.entries(backgrounds)) {
+      background.classList.toggle("is-active", phase === snapshot.phase);
+    }
 
     const shieldMeter = $("#shield-meter");
     const shieldPercent = Math.round((snapshot.shieldMs / snapshot.shieldMaxMs) * 100);

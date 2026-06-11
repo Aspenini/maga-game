@@ -48,18 +48,51 @@ button {
   isolation: isolate;
 }
 
-#game-container {
+#world-backgrounds {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  background: #050607;
+}
+
+#world-backgrounds::after {
+  content: "";
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.world-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 900ms ease-in-out;
+  image-rendering: pixelated;
+}
+
+.world-background.is-active {
+  opacity: 1;
+}
+
+#game-container {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
 }
 
 #game-container canvas {
+  position: absolute;
   display: block;
-  width: 100% !important;
-  height: 100% !important;
-  object-fit: contain;
+  max-width: none;
+  max-height: none;
+  margin: 0 !important;
   image-rendering: pixelated;
   outline: none;
 }

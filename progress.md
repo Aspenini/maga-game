@@ -20,3 +20,8 @@ Original prompt: Create and implement a Super Mario Bros-style promotional game 
 - No known implementation TODOs remain.
 - Added a visible native desktop target using `webview-bun`, an embedded Bun
   loopback server, and `bun build --compile`.
+- Environment plates now render in a separate full-viewport layer that
+  uses proportional cover scaling and crossfades smoothly between phases.
+- The transparent game canvas also uses proportional cover zoom, with the
+  player horizontally anchored and the running platform aligned to the bottom
+  on tall or narrow viewports.

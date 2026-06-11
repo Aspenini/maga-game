@@ -31,7 +31,6 @@ export class RunnerScene extends Phaser.Scene {
   private player!: ArcadeSprite;
   private ground!: Phaser.Physics.Arcade.Image;
   private groundVisual!: Phaser.GameObjects.TileSprite;
-  private backgrounds = new Map<Phase, Phaser.GameObjects.Image>();
   private collectibles!: Phaser.Physics.Arcade.Group;
   private hazards!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
@@ -67,15 +66,11 @@ export class RunnerScene extends Phaser.Scene {
     this.load.spritesheet("drone-hover", assetUrls.droneUrl, { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet("objects", assetUrls.objectsUrl, { frameWidth: 64, frameHeight: 64 });
     this.load.spritesheet("effects", assetUrls.effectsUrl, { frameWidth: 64, frameHeight: 64 });
-    this.load.image("bg-desert", assetUrls.desertUrl);
-    this.load.image("bg-archive", assetUrls.archiveUrl);
-    this.load.image("bg-launch", assetUrls.launchUrl);
   }
 
   create(): void {
     this.model = new RunModel(this.initialHighScore);
     this.createTextures();
-    this.createBackgrounds();
     this.createAnimations();
     this.createWorld();
     this.createInput();
@@ -162,22 +157,6 @@ export class RunnerScene extends Phaser.Scene {
     graphics.strokeRect(0, 0, 32, 32);
     graphics.generateTexture("ground-tile", 32, 32);
     graphics.destroy();
-  }
-
-  private createBackgrounds(): void {
-    (["desert", "archive", "launch"] as const).forEach((phase) => {
-      const background = this.add
-        .image(0, 0, `bg-${phase}`)
-        .setOrigin(0)
-        .setDisplaySize(GAME_WIDTH, GAME_HEIGHT)
-        .setDepth(-20)
-        .setAlpha(phase === "desert" ? 1 : 0);
-      this.backgrounds.set(phase, background);
-    });
-    this.add
-      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.18)
-      .setOrigin(0)
-      .setDepth(-15);
   }
 
   private createAnimations(): void {
@@ -504,14 +483,6 @@ export class RunnerScene extends Phaser.Scene {
   private updatePhase(previous: Phase, next: Phase, force = false): void {
     if (!force && previous === next && this.lastPhase === next) return;
     this.lastPhase = next;
-    this.backgrounds.forEach((background, phase) => {
-      this.tweens.killTweensOf(background);
-      this.tweens.add({
-        targets: background,
-        alpha: phase === next ? 1 : 0,
-        duration: force ? 0 : 900,
-      });
-    });
     if (!force) {
       this.cameras.main.flash(240, 105, 248, 255, false, undefined, 0.08);
     }
