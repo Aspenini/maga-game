@@ -1,8 +1,6 @@
 # $MAGA Disclosure Runner
 
-An original pixel-art endless runner for Make Aliens Great Again. It uses Phaser,
-TypeScript, Bun's HTML bundler, generated game assets based on the official pixel
-alien mascot, and a DOM overlay for responsive menus and HUD.
+An endless runner for $MAGA
 
 ## Commands
 
